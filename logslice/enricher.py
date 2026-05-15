@@ -1,66 +1,70 @@
-"""Entry enrichment utilities that add derived fields to log entries."""
+"""Enricher module: attaches derived metadata to log entries."""
 
-import re
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Optional
 
-
-SEVERITY_RANK = {
+SEVERITY_RANK: dict[str, int] = {
     "DEBUG": 0,
     "INFO": 1,
     "WARNING": 2,
+    "WARN": 2,
     "ERROR": 3,
     "CRITICAL": 4,
+    "FATAL": 4,
 }
 
 
-def enrich_with_severity_rank(entry: Dict) -> Dict:
-    """Add a 'severity_rank' field based on the log level."""
-    result = dict(entry)
-    level = (entry.get("level") or "").upper()
-    result["severity_rank"] = SEVERITY_RANK.get(level)
-    return result
+def enrich_with_severity_rank(entry: dict) -> dict:
+    """Add a numeric 'severity_rank' field based on the log level."""
+    level = str(entry.get("level", "")).upper()
+    rank = SEVERITY_RANK.get(level, -1)
+    return {**entry, "severity_rank": rank}
 
 
-def enrich_with_line_number(entries: List[Dict]) -> List[Dict]:
-    """Add a 'line_number' field (1-based index) to each entry."""
-    return [{**e, "line_number": i + 1} for i, e in enumerate(entries)]
+def enrich_with_line_number(entry: dict, line_number: int) -> dict:
+    """Attach a 'line_number' field to the entry."""
+    return {**entry, "line_number": line_number}
 
 
-def enrich_with_source(entry: Dict, source: str) -> Dict:
-    """Add a 'source' field to the entry."""
-    result = dict(entry)
-    result["source"] = source
-    return result
+def enrich_with_source(entry: dict, source: str) -> dict:
+    """Attach a 'source' label (e.g. filename) to the entry."""
+    return {**entry, "source": source}
 
 
 def enrich_with_parsed_timestamp(
-    entry: Dict,
+    entry: dict,
     fmt: str = "%Y-%m-%dT%H:%M:%S",
-    field: str = "timestamp",
-) -> Dict:
-    """Add a 'parsed_timestamp' datetime object parsed from the timestamp field."""
-    result = dict(entry)
-    raw = entry.get(field)
+) -> dict:
+    """Parse the 'timestamp' string into a datetime object stored as 'parsed_timestamp'."""
+    raw: Optional[str] = entry.get("timestamp")
+    parsed: Optional[datetime] = None
     if raw:
         try:
-            result["parsed_timestamp"] = datetime.strptime(raw, fmt)
+            parsed = datetime.strptime(raw, fmt)
         except (ValueError, TypeError):
-            result["parsed_timestamp"] = None
-    else:
-        result["parsed_timestamp"] = None
-    return result
+            parsed = None
+    return {**entry, "parsed_timestamp": parsed}
 
 
 def enrich_entries(
-    entries: List[Dict],
-    enrichments: List[Callable[[Dict], Dict]],
-) -> List[Dict]:
-    """Apply a list of enrichment functions to each entry."""
+    entries: list[dict],
+    source: Optional[str] = None,
+    add_severity: bool = True,
+    add_line_numbers: bool = True,
+    parse_timestamps: bool = False,
+    timestamp_fmt: str = "%Y-%m-%dT%H:%M:%S",
+) -> list[dict]:
+    """Apply a configurable set of enrichments to every entry in a list."""
     result = []
-    for entry in entries:
-        current = entry
-        for enrich in enrichments:
-            current = enrich(current)
-        result.append(current)
+    for i, entry in enumerate(entries):
+        e = entry
+        if add_severity:
+            e = enrich_with_severity_rank(e)
+        if add_line_numbers:
+            e = enrich_with_line_number(e, i + 1)
+        if source is not None:
+            e = enrich_with_source(e, source)
+        if parse_timestamps:
+            e = enrich_with_parsed_timestamp(e, fmt=timestamp_fmt)
+        result.append(e)
     return result
